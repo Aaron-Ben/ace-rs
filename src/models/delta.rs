@@ -4,19 +4,19 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum OperationType {
-    Add,
-    Update,
-    Tag,
-    Remove,
+    ADD,
+    UPDATE,
+    TAG,
+    REMOVE,
 }
 
 impl std::fmt::Display for OperationType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OperationType::Add => write!(f, "ADD"),
-            OperationType::Update => write!(f, "UPDATE"),
-            OperationType::Tag => write!(f, "TAG"),
-            OperationType::Remove => write!(f, "REMOVE"),
+            OperationType::ADD => write!(f, "ADD"),
+            OperationType::UPDATE => write!(f, "UPDATE"),
+            OperationType::TAG => write!(f, "TAG"),
+            OperationType::REMOVE => write!(f, "REMOVE"),
         }
     }
 }
@@ -37,16 +37,16 @@ impl DeltaOperation {
     pub fn from_json(payload: &serde_json::Value) -> Result<Self, Box<dyn std::error::Error>> {
         let op_type_str = payload["type"].as_str().ok_or("Invalid type")?.to_uppercase();
         let op_type = match op_type_str.as_str() {
-            "ADD" => OperationType::Add,
-            "UPDATE" => OperationType::Update,
-            "TAG" => OperationType::Tag,
-            "REMOVE" => OperationType::Remove,
+            "ADD" => OperationType::ADD,
+            "UPDATE" => OperationType::UPDATE,
+            "TAG" => OperationType::TAG,
+            "REMOVE" => OperationType::REMOVE,
             _ => return Err(format!("Invalid operation type: {}", op_type_str).into()),
         };
 
         let mut metadata: HashMap<String, i32> = HashMap::new();
         if let Some(meta_raw) = payload["metadata"].as_object() {
-            if op_type == OperationType::Tag {
+            if op_type == OperationType::TAG {
                 let valid_tags = vec!["helpful", "harmful", "neutral"];
                 for (k, v) in meta_raw {
                     if valid_tags.contains(&k.as_str()) {
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn test4() {
         let delta = DeltaOperation {
-            type_: OperationType::Add,
+            type_: OperationType::ADD,
             section: "This is a test".to_string(),
             content: Some("This is a test".to_string()),
             bullet_id: None,
