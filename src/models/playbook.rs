@@ -223,7 +223,7 @@ impl Playbook {
     fn _apply_operation(&mut self, op: DeltaOperation) -> Result<(), PlaybookError> {
 
         match op.type_ {
-            OperationType::ADD => {
+            OperationType::Add => {
                 let metadata = if op.metadata.is_empty() {
                     None
                 } else {
@@ -244,7 +244,7 @@ impl Playbook {
                 Ok(())
             }
 
-            OperationType::UPDATE => {
+            OperationType::Update => {
                 let bullet_id = op.bullet_id.ok_or_else(|| {
                     PlaybookError::DeltaMissingField("bullet_id required for UPDATE".to_string())
                 })?;
@@ -264,7 +264,7 @@ impl Playbook {
                 Ok(())
             }
 
-            OperationType::TAG => {
+            OperationType::Tag => {
                 let bullet_id = op.bullet_id.ok_or_else(|| {
                     PlaybookError::DeltaMissingField("bullet_id required for TAG".to_string())
                 })?;
@@ -276,7 +276,7 @@ impl Playbook {
                 Ok(())
             }
 
-            OperationType::REMOVE => {
+            OperationType::Remove => {
                 let bullet_id = op.bullet_id.ok_or_else(|| {
                     PlaybookError::DeltaMissingField("bullet_id required for REMOVE".to_string())
                 })?;

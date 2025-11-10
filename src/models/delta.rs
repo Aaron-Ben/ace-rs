@@ -1,139 +1,93 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum DeltaError {
+    #[error("JSON解析错误：{0}")]
+    JsonParseError(#[from] serde_json::Error),
+    #[error("无效的操作类型：{0}（仅支持ADD/UPDATE/TAG/REMOVE）")]
+    InvalidOperationType(String),
+    #[error("字段缺失：{0}（必填字段）")]
+    MissingRequiredField(String),
+    #[error("整数溢出：{0} 超出i32范围")]
+    IntegerOverflow(String),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum OperationType {
-    ADD,
-    UPDATE,
-    TAG,
-    REMOVE,
+    Add,
+    Update,
+    Tag,
+    Remove,
 }
 
 impl std::fmt::Display for OperationType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OperationType::ADD => write!(f, "ADD"),
-            OperationType::UPDATE => write!(f, "UPDATE"),
-            OperationType::TAG => write!(f, "TAG"),
-            OperationType::REMOVE => write!(f, "REMOVE"),
+            OperationType::Add => write!(f, "ADD"),
+            OperationType::Update => write!(f, "UPDATE"),
+            OperationType::Tag => write!(f, "TAG"),
+            OperationType::Remove => write!(f, "REMOVE"),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeltaOperation {
+    #[serde(rename = "type")]
     pub type_: OperationType,
     pub section: String,
+    
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bullet_id: Option<String>,
+    
+    #[serde(default = "HashMap::new")]
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, i32>,
 }
 
 impl DeltaOperation {
-    pub fn from_json(payload: &serde_json::Value) -> Result<Self, Box<dyn std::error::Error>> {
-        let op_type_str = payload["type"].as_str().ok_or("Invalid type")?.to_uppercase();
-        let op_type = match op_type_str.as_str() {
-            "ADD" => OperationType::ADD,
-            "UPDATE" => OperationType::UPDATE,
-            "TAG" => OperationType::TAG,
-            "REMOVE" => OperationType::REMOVE,
-            _ => return Err(format!("Invalid operation type: {}", op_type_str).into()),
-        };
+    pub fn from_json(payload: &serde_json::Value) -> Result<Self, DeltaError> {
+        let mut op: Self = serde_json::from_value(payload.clone())?;
 
-        let mut metadata: HashMap<String, i32> = HashMap::new();
-        if let Some(meta_raw) = payload["metadata"].as_object() {
-            if op_type == OperationType::TAG {
-                let valid_tags = vec!["helpful", "harmful", "neutral"];
-                for (k, v) in meta_raw {
-                    if valid_tags.contains(&k.as_str()) {
-                        if let Some(val) = v.as_i64() {
-                            metadata.insert(k.clone(), val as i32);
-                        }
-                    }
-                }
-            } else {
-                for (k, v) in meta_raw {
-                    if let Some(val) = v.as_i64() {
-                        metadata.insert(k.clone(), val as i32);
-                    }
-                }
-            }
+        // 验证TAG操作的metadata
+        if op.type_ == OperationType::Tag {
+            let valid_tags = ["helpful", "harmful", "neutral"];
+            op.metadata.retain(|k, _| valid_tags.contains(&k.as_str()));
         }
 
-        Ok(Self {
-            type_: op_type,
-            section: payload["section"].as_str().unwrap_or("").to_string(),
-            content: payload["content"].as_str().map(|s| s.to_string()),
-            bullet_id: payload["bullet_id"].as_str().map(|s| s.to_string()),
-            metadata,
-        })
+        Ok(op)
     }
 
-    pub fn to_json(&self) -> serde_json::Value {
-        let mut map = serde_json::Map::new();
-        let type_str = format!("{}", self.type_).to_lowercase();
-        map.insert("type".to_string(), serde_json::Value::String(type_str));
-        map.insert("section".to_string(), serde_json::Value::String(self.section.clone()));
-
-        if let Some(content) = &self.content {
-            map.insert("content".to_string(), serde_json::Value::String(content.clone()));
-        }
-
-        if let Some(bullet_id) = &self.bullet_id {
-            map.insert("bullet_id".to_string(), serde_json::Value::String(bullet_id.clone()));
-        }
-
-        if !self.metadata.is_empty() {
-            let mut meta_map = serde_json::Map::new();
-            for (k, v) in &self.metadata {
-                meta_map.insert(k.clone(), serde_json::Value::Number(serde_json::Number::from(*v)));
-            }
-            map.insert("metadata".to_string(), serde_json::Value::Object(meta_map));
-        }
-
-        serde_json::Value::Object(map)
+    pub fn to_json(&self) -> Result<serde_json::Value, DeltaError> {
+        Ok(serde_json::to_value(self)?)
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeltaBatch {
+    #[serde(default)]
     pub reasoning: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    
+    #[serde(default)]
     pub operations: Vec<DeltaOperation>,
 }
 
 impl DeltaBatch {
-    pub fn from_json(payload: &serde_json::Value) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut operations = Vec::new();
-        if let Some(ops_array) = payload["operations"].as_array() {
-            for item in ops_array {
-                if let serde_json::Value::Object(_) = item {
-                    operations.push(DeltaOperation::from_json(item)?);
-                }
-            }
-        }
-
-        Ok(Self {
-            reasoning: payload["reasoning"].as_str().unwrap_or("").to_string(),
-            operations,
-        })
+    pub fn from_json(payload: &serde_json::Value) -> Result<Self, DeltaError> {
+        let batch: Self = serde_json::from_value(payload.clone())?;
+        Ok(batch)
     }
 
-    pub fn to_json(&self) -> serde_json::Value {
-        let mut map = serde_json::Map::new();
-        map.insert("reasoning".to_string(), serde_json::Value::String(self.reasoning.clone()));
-
-        let mut ops_array = Vec::new();
-        for op in &self.operations {
-            ops_array.push(op.to_json());
-        }
-        map.insert("operations".to_string(), serde_json::Value::Array(ops_array));
-
-        serde_json::Value::Object(map)
+    pub fn to_json(&self) -> Result<serde_json::Value, DeltaError> {
+        Ok(serde_json::to_value(self)?)
     }
 }
 
@@ -143,36 +97,42 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test1() {
+    fn test_delta_batch_deserialization() {
         let json = json!({
             "reasoning": "This is a test",
             "operations": [
                 {
-                    "type": "add",
-                    "value": "This is a test"
+                    "type": "ADD",
+                    "section": "test section",
+                    "content": "This is a test"
                 }
             ]
         });
 
         let delta = DeltaBatch::from_json(&json).unwrap();
-        println!("{:?}", delta)
+        assert_eq!(delta.operations.len(), 1);
+        assert_eq!(delta.operations[0].type_, OperationType::Add);
+        assert_eq!(delta.operations[0].section, "test section");
+        assert_eq!(delta.operations[0].content, Some("This is a test".to_string()));
     }
 
     #[test]
-    fn test2() {
+    fn test_delta_batch_serialization() {
         let delta = DeltaBatch {
             reasoning: "This is a test".to_string(),
             operations: vec![],
         };
-        let json = delta.to_json();
-        println!("{}", json);
+        let json = delta.to_json().unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("operations"));
+        assert!(obj["operations"].as_array().unwrap().is_empty());
     }
 
     #[test]
-    fn test3() {
+    fn test_delta_operation_with_metadata() {
         let json = json!({
-            "type": "add",
-            "section": "This is a test",
+            "type": "ADD",
+            "section": "test section",
             "content": "This is a test",
             "bullet_id": "123",
             "metadata": {
@@ -181,20 +141,43 @@ mod tests {
                 "neutral": 0
             }
         });
-        let delta =  DeltaOperation::from_json(&json).unwrap();
-        println!("{:?}", delta);
+        
+        let delta = DeltaOperation::from_json(&json).unwrap();
+        assert_eq!(delta.type_, OperationType::Add);
+        assert_eq!(delta.section, "test section");
+        assert_eq!(delta.bullet_id, Some("123".to_string()));
+        assert_eq!(delta.metadata["helpful"], 1);
     }
 
     #[test]
-    fn test4() {
-        let delta = DeltaOperation {
-            type_: OperationType::ADD,
-            section: "This is a test".to_string(),
-            content: Some("This is a test".to_string()),
-            bullet_id: None,
-            metadata: HashMap::new(),
-        };
-        let json = delta.to_json();
-        println!("{}", json);
+    fn test_tag_operation_metadata_filtering() {
+        let json = json!({
+            "type": "TAG",
+            "section": "test",
+            "bullet_id": "123",
+            "metadata": {
+                "helpful": 1,
+                "invalid_tag": 5,  // 被过滤掉
+                "neutral": 2
+            }
+        });
+        
+        let delta = DeltaOperation::from_json(&json).unwrap();
+        assert_eq!(delta.metadata.len(), 2); // 只保留helpful和neutral
+        assert!(delta.metadata.contains_key("helpful"));
+        assert!(delta.metadata.contains_key("neutral"));
+        assert!(!delta.metadata.contains_key("invalid_tag"));
+    }
+
+    #[test]
+    fn test_unknown_fields_rejection() {
+        let json = json!({
+            "type": "ADD",
+            "section": "test",
+            "unknown_field": "should fail"  // 这个字段不存在于结构体中
+        });
+        
+        let result = DeltaOperation::from_json(&json);
+        assert!(result.is_err());
     }
 }
